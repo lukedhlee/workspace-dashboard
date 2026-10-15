@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Workspace</title>
+<meta name="description" content="What every Claude and Codex session is doing, what needs you, and when each task lands.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="gate" hidden></div>
+<div class="app" id="app" hidden>
+  <aside class="side">
+    <div class="brand">
+      <span class="brand-mark"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><rect x="1" y="2" width="14" height="3" rx="1.2"/><rect x="3.5" y="6.5" width="11.5" height="3" rx="1.2"/><rect x="6" y="11" width="9" height="3" rx="1.2"/></svg></span>
+      <div><b>Workspace</b><small>Projects, tasks, sessions</small></div>
+    </div>
+    <nav class="nav" id="nav" aria-label="Views"></nav>
+    <div>
+      <h5>Projects</h5>
+      <div class="plist" id="plist"></div>
+    </div>
+    <div class="side-foot" id="sidefoot"></div>
+  </aside>
+  <main id="main"><p class="loading">Loading…</p></main>
+</div>
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-label="Details" tabindex="-1"></aside>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
