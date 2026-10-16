@@ -9,7 +9,7 @@ const STATS={loads:0,realtime:0,timer:0,rt:'closed',seen:[]};   // read by the b
 window.__wsStats=STATS;
 
 /* ---------- live data (refilled on every load) ---------- */
-let PROJECTS=[],TASKS=[],SESSIONS=[],ASKS=[],EVENTS=[];
+let PROJECTS=[],TASKS=[],SESSIONS=[],ASKS=[],EVENTS=[],CHECKS=[];   // CHECKS: one reconciliation row per machine
 let PIDX=new Map(),TIDX=new Map(),SIDX=new Map();
 const CONVO={};            // session id -> {turns, msgs, gen}
 const TURN_LIMIT=200,MSG_LIMIT=100;
@@ -20,7 +20,7 @@ const HOST_PREF=['horizon','jupiter','mac'];
 function hostInfo(h){return HOST_INFO[h]||{name:h?h[0].toUpperCase()+h.slice(1):'Unknown',sub:''}}
 function hostOrder(){
   const rank=h=>{const i=HOST_PREF.indexOf(h);return i<0?99:i};
-  return [...new Set(SESSIONS.map(s=>s.host))].sort((a,b)=>rank(a)-rank(b)||a.localeCompare(b));
+  return [...new Set([...SESSIONS.map(s=>s.host),...CHECKS.map(c=>c.host)])].sort((a,b)=>rank(a)-rank(b)||a.localeCompare(b));
 }
 
 /* ---------- helpers ---------- */
@@ -271,8 +271,20 @@ function lede(pf){
   const said=bad.map(s=>`<button class="inline" data-act="session" data-id="${s.key}">${hn(s)} · ${esc(s.name)}</button> ${what(s)}`);
   if(said.length)t+=(said.length>1?said.slice(0,-1).join(', ')+(said.length>2?',':'')+' and '+said[said.length-1]:said[0])+'. ';
   const od=TASKS.filter(x=>vis(x)&&(!pf||x.project===pf)&&etaState(x).c==='e-bad');
-  if(od.length)t+=`${od.length} ${od.length>1?'tasks are':'task is'} past ${od.length>1?'their ETAs':'its ETA'}.`;
+  if(od.length)t+=`${od.length} ${od.length>1?'tasks are':'task is'} past ${od.length>1?'their ETAs':'its ETA'}. `;
+  if(!pf)t+=unreportedSentence();
   return t;
+}
+// "3 Claude sessions on the MacBook are running but not reporting." from every machine's latest check
+function unreportedSentence(){
+  const groups=new Map();
+  for(const c of CHECKS)for(const u of c.unreported){const k=c.host+'|'+AGENT_NAME(u.agent);groups.set(k,(groups.get(k)||0)+1)}
+  if(!groups.size)return '';
+  const parts=[...groups].map(([k,n])=>{const [h,a]=k.split('|'),name=hostInfo(h).name;
+    return `<button class="inline" data-act="nav" data-id="sessions">${n} ${a} session${n>1?'s':''} on ${h==='mac'?'the ':''}${esc(name)}</button>`});
+  const total=[...groups.values()].reduce((x,y)=>x+y,0);
+  const list=parts.length>1?parts.slice(0,-1).join(', ')+' and '+parts[parts.length-1]:parts[0];
+  return `<span data-unreported>${list} ${total>1?'are':'is'} running but not reporting.</span>`;
 }
 function todayLabel(){const p=ptp(new Date(NOW));return `${DOW[p.wd]} ${MON[p.m]} ${p.d} · ${p.hm} PT`}
 function viewToday(){
@@ -325,13 +337,28 @@ function hostNote(h){
   if(!open.length)return {warn:false,text:'Nothing open here'};
   return {warn:false,text:'Last heard from '+ago(Math.min(...open.map(s=>s.heard)))};
 }
+// Reconciliation: each machine's sidecar compares the agent processes running there with the dashboard every 10 min.
+const CHECK_FRESH=30;
+const AGENT_NAME=a=>String(a||'claude').toLowerCase()==='codex'?'Codex':'Claude';
+function hostCheck(h){
+  const cs=CHECKS.filter(c=>c.host===h);
+  if(!cs.length)return null;
+  const newest=Math.min(...cs.map(c=>c.ago)),fresh=cs.filter(c=>c.ago<=CHECK_FRESH);
+  if(!fresh.length)return {cls:'mute',text:`Last check ${ago(newest)}`,title:'No session is running there to run the check, which is normal'};
+  const running=fresh.reduce((n,c)=>n+c.agents,0),missing=fresh.flatMap(c=>c.unreported.map(u=>({...u,machine:c.machine})));
+  const head=`Checked ${clock(newest)} PT · `,where=fresh.length>1?` on ${fresh.length} machines`:'';
+  if(missing.length)return {cls:'warn',text:`${head}${running} running${where}, ${missing.length} not reporting`,
+    title:missing.map(u=>`${AGENT_NAME(u.agent)} on ${u.machine}, pid ${u.pid}${u.age_s!=null?`, running ${dur(Math.round(u.age_s/60))}`:''}`).join('\n')};
+  return {cls:'ok',text:running?`${head}${running} running${where}, all on the dashboard`:`${head}no agents running${where}`};
+}
 function viewSessions(){
   const hosts=hostOrder().map(h=>{
-    const all=SESSIONS.filter(s=>s.host===h),live=all.filter(s=>s.status!=='ended'),note=hostNote(h);
+    const all=SESSIONS.filter(s=>s.host===h),live=all.filter(s=>s.status!=='ended'),note=hostNote(h),chk=hostCheck(h);
     return `<div class="host"><div class="host-h"><b>${esc(hostInfo(h).name)}</b><span>${esc(hostInfo(h).sub)}</span></div>
       <div class="host-n"><span class="big">${live.length}</span> open session${live.length===1?'':'s'}${all.length>live.length?`, ${all.length-live.length} ended`:''}</div>
       <div class="host-dots">${all.sort((a,b)=>SORD[a.status]-SORD[b.status]).map(s=>`<span class="sdot" data-s="${s.status}" title="${esc(s.name)}: ${SLABEL[s.status]}"></span>`).join('')}</div>
-      <p class="host-note ${note.warn?'warn':''}">${note.text}</p></div>`;
+      <p class="host-note ${note.warn?'warn':''}">${note.text}</p>
+      ${chk?`<p class="host-check ${chk.cls}" data-check="${esc(h)}"${chk.title?` title="${esc(chk.title)}"`:''}>${esc(chk.text)}</p>`:''}</div>`;
   }).join('');
   return `
   <header class="page-h"><div><h1>Sessions</h1><p class="sub">Every Claude and Codex session, where it lives, and whether it is alive</p></div></header>
@@ -438,8 +465,8 @@ ws end --handoff ai_memory/handoffs/2026-10-15_1430PT_rl-parity.md</pre>
   <div class="tbl" style="margin-top:12px"><table>
     <thead><tr><th>Status</th><th>Rule</th></tr></thead>
     <tbody>
-      <tr><td>${spill('ended')}</td><td>It ended cleanly, through ws end or the SessionEnd hook</td></tr>
-      <tr><td>${spill('dead')}</td><td>The sidecar saw its process disappear without a clean end</td></tr>
+      <tr><td>${spill('ended')}</td><td>It ended cleanly through ws end or the SessionEnd hook, or its process exited while it was idle with nothing asked</td></tr>
+      <tr><td>${spill('dead')}</td><td>Its process disappeared mid-turn or with an open ask, without a clean end</td></tr>
       <tr><td>${spill('lost')}</td><td>No contact of any kind, hook or sidecar, for 30 minutes. Something is wrong and we cannot tell what</td></tr>
       <tr><td>${spill('needs')}</td><td>It has an open ask</td></tr>
       <tr><td>${spill('silent')}</td><td>A turn is running and it is past the time its last heartbeat promised</td></tr>
@@ -458,6 +485,9 @@ ws end --handoff ai_memory/handoffs/2026-10-15_1430PT_rl-parity.md</pre>
     <li>One sidecar per session checks the process every 30 seconds, pings every 5 minutes, and delivers your messages. That is how Dead gets confirmed instead of guessed.</li>
     <li>One token per host in <code>~/.ws/config</code>, set up by <code>ws install --host &lt;name&gt;</code>. Tokens are revocable.</li>
   </ul>
+
+  <h2 class="doc-h">Is the dashboard complete?</h2>
+  <p>Every 10 minutes, each session’s sidecar lists the Claude and Codex processes running on its machine and compares them with the live sessions here. One that has run for over 2 minutes without reporting becomes a Bad news item and shows on its host’s card under Sessions, so a session with missing hooks cannot hide. A session that looks live but whose process is gone is settled automatically: ended quietly if it was idle, Dead otherwise.</p>
 
   <h2 class="doc-h">Looking in and talking back</h2>
   <p>Sessions started with Remote Control can be watched and typed to live in claude.ai, so this page links straight there. It cannot show claude.ai inside itself, because that is a separate site.</p>
@@ -865,16 +895,18 @@ function ensureConvo(sid){
 }
 async function load(){
   const shown=shownSessions();
-  const [pr,tk,ss,as,ev,cv]=await Promise.all([
+  const [pr,tk,ss,as,ev,cv,hc]=await Promise.all([
     sb.from('projects').select('*').order('created_at').order('name').then(must),
     sb.from('v_tasks').select('*').order('created_at').then(must),
     sb.from('v_sessions').select('*').order('started_at',{ascending:false}).limit(500).then(must),
     sb.from('asks').select('*').order('ts',{ascending:false}).limit(500).then(must),
     sb.from('events').select('*').order('ts',{ascending:false}).limit(500).then(must),
-    Promise.all(shown.map(fetchConvo))]);
+    Promise.all(shown.map(fetchConvo)),
+    sb.from('host_checks').select('*').then(must)]);
   NOW=Date.now();GEN++;STATS.loads++;
   PROJECTS=pr.map(r=>({id:r.id,slug:r.slug,name:r.name,blurb:r.blurb||'',archived:!!r.archived_at}));
   TASKS=tk.map(mapTask);SESSIONS=ss.map(mapSession);ASKS=as.map(mapAsk);EVENTS=ev.map(mapEvent);
+  CHECKS=hc.map(r=>({host:r.host,machine:r.machine,ago:agoOf(r.at),agents:r.agents||0,tracked:r.tracked||0,unreported:Array.isArray(r.unreported)?r.unreported:[]}));
   PIDX=new Map(PROJECTS.map(x=>[x.id,x]));TIDX=new Map(TASKS.map(x=>[x.id,x]));SIDX=new Map(SESSIONS.map(x=>[x.key,x]));
   shown.forEach((sid,i)=>{CONVO[sid]={...cv[i],gen:GEN}});
 }
@@ -895,7 +927,7 @@ let channel=null,clockTimer=null;
 function subscribe(){
   if(channel)return;
   channel=sb.channel('workspace-site');
-  for(const table of ['projects','tasks','milestones','sessions','events','asks','messages','turns'])
+  for(const table of ['projects','tasks','milestones','sessions','events','asks','messages','turns','host_checks'])
     channel.on('postgres_changes',{event:'*',schema:'public',table},p=>{
       const r=p.new&&Object.keys(p.new).length?p.new:p.old||{};
       STATS.realtime++;STATS.seen.push(`${table}:${r.id??''}`);if(STATS.seen.length>200)STATS.seen.shift();
@@ -911,7 +943,7 @@ function teardown(){
   if(channel){sb.removeChannel(channel);channel=null}
   clearInterval(clockTimer);clockTimer=null;STATS.rt='closed';
   READY=false;delete document.documentElement.dataset.ready;
-  PROJECTS=TASKS=SESSIONS=ASKS=EVENTS=[];PIDX=new Map();TIDX=new Map();SIDX=new Map();
+  PROJECTS=TASKS=SESSIONS=ASKS=EVENTS=CHECKS=[];PIDX=new Map();TIDX=new Map();SIDX=new Map();
   for(const k of Object.keys(CONVO))delete CONVO[k];
 }
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&READY)refreshSoon(0)});
